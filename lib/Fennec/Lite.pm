@@ -8,11 +8,12 @@ use Carp qw/ croak /;
 use List::Util qw/ shuffle /;
 use B;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 our @USE_IF_PRESENT = qw/
     Test::Warn
     Test::Exception
+    Fake::Thing
 /;
 
 our @EXPORT = qw/
@@ -46,7 +47,7 @@ sub import {
     for my $pkg ( @USE_IF_PRESENT, @{ $specs{load} || [] }) {
         my $loaded = eval "package $caller; use $pkg; 1";
         my $error = $@;
-        next if $loaded || $error =~ m/Can't locate [\w\d_\/\.] in \@INC/;
+        next if $loaded || $error =~ m/Can't locate [\w\d_\/\.]+\.pm in \@INC/;
         die $error;
     }
 
