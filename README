@@ -9,7 +9,7 @@ DESCRIPTION
 
     Fennec::Lite is a single module file with no non-core dependencies. It
     can easily be used by any project, either directly, or by copying it
-    into your project. The file itself is less than 200 lines of code at the
+    into your project. The file itself is less than 300 lines of code at the
     time of this writing, that includes whitespace.
 
     This module does not cover any of the more advanced features such as
@@ -85,6 +85,24 @@ SYNOPSIS
 
         run_tests( "This is the construction string" );
 
+  Pure OO Interface
+        #!/usr/bin/perl
+        use strict;
+        use warnings;
+
+        use Fennec::Lite ();
+        use Test::More;
+
+        my $fennec = Fennec::Lite->new( test_class => __PACKAGE__ );
+
+        $fennec->add_tests( "test name" => sub {
+            ok( ... );
+        });
+
+        $fennec->run_tests;
+
+        done_testing();
+
 IMPORTED FOR YOU
     When you use Fennec::Lite, Test::More is automatically imported for you.
     In addition Test::Warn and Test::Exception will also be loaded, but only
@@ -154,9 +172,93 @@ EXPORTED FUNCTIONS
         you may continue to declare tests and call run_tests again to run
         the new tests.
 
+    fennec()
+        Returns the instance of Fennec::Lite created when you imported it.
+        This is the instance that tests() and run_tests() act upon.
+
     fennec_accessors( @NAMES )
         Quickly generate get/set accessors for your test class. You could
         alternatively do it manually or use Moose.
+
+PURE OO INTERFACE METHODS
+    $tests_ref = $fennec->tests()
+        Get a reference to the array of tests that have been added since the
+        last run.
+
+    $classname = $fennec->test_class( $classname )
+        Get/Set the class name that will be used to create test objects that
+        will act as the invocant on all test methods.
+
+    $seed = $fennec->seed( $newseed )
+        Get/Set the random seed that will be used to re-seed srand() before
+        randomizing tests, as well as before each test.
+
+    $bool = $fennec->random( $bool )
+        Turn random on/off.
+
+    $fennec->add_tests( $name => sub { ... })
+    $fennec->add_tests( $name, %args, method => sub { ... })
+        Add a test group.
+
+    $fennec->run_tests( %test_class_construction_args )
+        Run the test groups
+
+    $bool = $fennec->run_skip_test( \%test )
+        Run a skip test (really just returns true)
+
+    $bool = $fennec->run_todo_group( \%test )
+        Run a group as TODO
+
+    $bool = $fennec->run_test_group( \%test )
+        Run a test group.
+
+    ( $bool, $error ) = $fennec->run_test_eval( \%test )
+        Does the actual test running in an eval to capture errors.
+
+    $fennec->test_eval_error( $bool, $error, \%test )
+        Handle a test eval error.
+
+Extending Fennec::Lite
+    In the tradition of the Fennec project, Fennec::Lite is designed to be
+    extensible. You can even easily subclass/edit Fennec::Lite to work with
+    alternatives to Test::Builder.
+
+  METHODS TO OVERRIDE
+    $fennec->init()
+        Called by new prior to returning the newly constructed object. In
+        Fennec::Lite this loads Test::Builder and puts a reference to it in
+        the TB() accessor. If you do want to replace Test::Builder in your
+        subclass you may do so by overriding init().
+
+    $fennec->run_skip_test( \%test )
+        Calls Test::Builder->skip( $reason ), then returns true. Override
+        this if you replace Test::Builder in your subclass.
+
+    $fennec->run_todo_group( \%test )
+        Calls run_test_eval() in a TODO environment. Currently uses
+        Test::Builder to start/stop TODO mode around the test. Override this
+        if you wish to replace Test::Builder.
+
+    $fennec->test_eval_error( $bool, $error, \%test )
+        Handle an exception thrown in a test group method. Currently calls
+        Test::Bulder->ok( 0, GROUP_NAME ).
+
+    @list = must_load()
+        Returns a list of modules that MUST be loaded into tho calling class
+        (unless used in OO form). This is currently only Test::More.
+
+    @list = may_load()
+        Returns a list of modules that should be loaded only if they are
+        installed.
+
+    $name_to_code_ref = module_loaders()
+        Returns a hashref containing package => sub { ... }. Use this if you
+        need to load modules in a custom way, currently Test::More has a
+        special loader in here to account for plans.
+
+    $fennec->import_hook()
+        Called on the instance that was created by import(), runs at the
+        very end of the import process. Currently does nothing.
 
 FENNEC PROJECT
     This module is part of the Fennec project. See Fennec for more details.

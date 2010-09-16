@@ -2,36 +2,43 @@ package Fennec::Lite;
 use strict;
 use warnings;
 
-use Test::Builder;
-use Test::More;
 use Carp qw/ croak /;
 use List::Util qw/ shuffle /;
 use B;
 
-our $VERSION = '0.003';
+our $VERSION = '0.004';
 
-our @USE_IF_PRESENT = qw/
+our %MODULE_LOADERS = (
+    'Test::More' => sub {
+        my ( $self ) = @_;
+        my $into = $self->test_class;
+        require Test::More;
+
+        my $plan = $self->plan || (Test::More->can('done_testing') ? '' : 'no_plan');
+        eval "package $into; Test::More->import(" . ($plan ? 'tests => $plan' : '') . "); 1"
+            || die $@;
+    },
+);
+
+sub import_hook {}
+sub module_loaders { \%MODULE_LOADERS }
+sub must_load {qw/ Test::More /}
+sub may_load {qw/
     Test::Warn
     Test::Exception
-    Fake::Thing
-/;
-
-our @EXPORT = qw/
-    tests
-    run_tests
-    fennec_accessors
-/;
+/};
 
 fennec_accessors(qw/
-    _tests
-    load
-    created_by
+    tests
+    test_class
     seed
     random
+    testing
+    alias
+    alias_to
+    plan
+    TB
 /);
-
-our $SINGLETON;
-sub get { $SINGLETON }
 
 sub import {
     my $class = shift;
@@ -40,24 +47,84 @@ sub import {
 
     $specs{random} = 1 unless defined $specs{random};
 
-    my $plan = $specs{plan} || (Test::More->can('done_testing') ? '' : 'no_plan');
-    eval "package $caller; Test::More->import(" . ($plan ? 'tests => $plan' : '') . "); 1"
-        || die $@;
+    my $instance = $class->new( %specs, test_class => $caller );
 
-    for my $pkg ( @USE_IF_PRESENT, @{ $specs{load} || [] }) {
-        my $loaded = eval "package $caller; use $pkg; 1";
-        my $error = $@;
-        next if $loaded || $error =~ m/Can't locate [\w\d_\/\.]+\.pm in \@INC/;
-        die $error;
+    $instance->_import_must_loads();
+    $instance->_import_way_loads();
+    $instance->_export_shortcuts();
+    $instance->_export_aliases();
+    $instance->_export_functions();
+    $instance->import_hook();
+
+    1;
+}
+
+sub new {
+    my $class = shift;
+    my @ltime = localtime(time);
+    my $self = bless ({
+        tests => [],
+        seed => $ENV{FENNEC_SEED} || join( '', @ltime[5,4,3] ),
+        @_,
+    }, $class );
+    $self->init();
+    return $self;
+}
+
+sub init {
+    my $self = shift;
+    require Test::Builder;
+    $self->TB( Test::Builder->new());
+}
+
+sub _import_loads {
+    my $self = shift;
+    my ( $no_die_on_fail, @load ) = @_;
+    my $handlers = $self->module_loaders;
+
+    for my $package ( @load ) {
+        if ($handlers->{$package}) {
+            $handlers->{$package}->( $self );
+            next;
+        }
+        my ($ret, $error) = load_package_into( $package, $self->test_class );
+        next if $ret;
+        die $error unless $no_die_on_fail && $error =~ m/Can't locate [\w\d_\/\.]+\.pm in \@INC/;
     }
+}
 
-    if ( my $testing = $specs{testing}) {
-        no strict 'refs';
-        *{"$caller\::CLASS"} = sub { $testing };
-        *{"$caller\::CLASS"} = \$testing;
-    }
+sub load_package_into {
+    my ( $load, $into ) = @_;
+    local $@;
+    my $ret = eval "package $into; use $load; 1;";
+    return $ret ? ( $ret ) : ( $ret, $@ );
+}
 
-    if ( my $aliases = $specs{alias}) {
+sub _import_must_loads {
+    my $self = shift;
+    $self->_import_loads( 0, $self->must_load );
+}
+
+sub _import_way_loads {
+    my $self = shift;
+    $self->_import_loads( 1, $self->may_load );
+}
+
+sub _export_shortcuts {
+    my $self = shift;
+    my $package = $self->testing || return;
+    my $into = $self->test_class;
+
+    no strict 'refs';
+    *{"$into\::CLASS"} = sub { $package };
+    *{"$into\::CLASS"} = \$package;
+}
+
+sub _export_aliases {
+    my $self = shift;
+    my $caller = $self->test_class;
+
+    if ( my $aliases = $self->alias ) {
         $aliases = [ $aliases ] unless ref $aliases;
         for my $class ( @$aliases ) {
             eval "require $class; 1" || die $@;
@@ -68,38 +135,35 @@ sub import {
         }
     }
 
-    if ( my $alias_map = $specs{alias_to}) {
+    if ( my $alias_map = $self->alias_to ) {
         for my $name ( keys %$alias_map ) {
             my $class = $alias_map->{ $name };
             no strict 'refs';
             *{"$caller\::$name"} = sub { $class };
         }
     }
-
-    for my $export ( @EXPORT ) {
-        no strict 'refs';
-        *{"$caller\::$export"} = $class->can( $export )
-            || croak "$class does not export $export.";
-    }
-
-    $SINGLETON ||= $class->_new( %specs, created_by => $caller );
 }
 
-sub _new {
-    my $class = shift;
-    my %proto = @_;
-    my @ltime = localtime(time);
-    %proto = (
-        _tests => [],
-        seed => $ENV{FENNEC_SEED} || join( '', @ltime[5,4,3] ),
-        %proto,
-    );
-    return bless( \%proto, $class );
+sub _export_functions {
+    my $self = shift;
+    my $into = $self->test_class;
+
+    no strict 'refs';
+    *{"$into\::tests"}     = sub { $self->_add_tests( @_ ) };
+    *{"$into\::run_tests"} = sub { $self->run_tests( @_ )  };
+    *{"$into\::fennec"}    = sub { return $self            };
+
+    *{"$into\::fennec_accessors"} = \&fennec_accessors;
 }
 
-sub tests {
-    my $runner = __PACKAGE__->get;
-    ( undef, undef, my $end_line ) = caller;
+sub add_tests {
+    my $self = shift;
+    $self->_add_tests( @_ );
+}
+
+sub _add_tests {
+    my $self = shift;
+    ( undef, undef, my $end_line ) = caller(1);
     my $name = shift;
     my %proto = ( @_ == 1 )
         ? ( method => $_[0] )
@@ -116,25 +180,25 @@ sub tests {
     croak "You must provide a coderef as one of the following params 'method', 'code', or 'sub'."
         unless $proto{method};
 
-    push @{$runner->_tests} => \%proto;
+    push @{$self->tests} => \%proto;
 }
 
 sub run_tests {
+    my $self = shift;
     my %params = @_;
-    my $caller = caller;
-    my $runner = __PACKAGE__->get;
-    my $tests = $runner->_tests;
+    my $tests = $self->tests;
     my $pass = 1;
-    my $TB = Test::Builder->new;
     my $item = $ENV{FENNEC_ITEM};
 
-    my $invocant = $caller->can( 'new' )
-        ? $caller->new( %params )
-        : bless( \%params, $caller );
+    my $invocant_class = $self->test_class;
+    my $invocant = $invocant_class->can( 'new' )
+        ? $invocant_class->new( %params )
+        : bless( \%params, $invocant_class );
 
-    srand( $runner->seed );
+    # Seed before randomizing tests, for reproducibility
+    srand( $self->seed );
     $tests = [ shuffle @$tests ]
-        if $runner->random;
+        if $self->random;
 
     for my $test ( @$tests ) {
         my $method = $test->{method};
@@ -150,34 +214,66 @@ sub run_tests {
             }
         }
 
-        my ( $ret, $err ) = ( 1, "" );
-        my $do_test = sub {
-            $ret = eval { $method->( $invocant ); 1 };
-            $err = $@;
-        };
-
-        my $reason;
-        if ( $reason = $test->{ skip }) {
-            note "Skipping: $name";
-            $TB->skip( $reason );
+        if ( $test->{ skip }) {
+            $pass &&= $self->run_skip_group( $invocant, $test );
         }
-        elsif ( $reason = $test->{ todo }) {
-            $TB->todo_start( $reason );
-            $do_test->();
-            $TB->todo_end;
+        elsif( $test->{ todo }) {
+            $pass &&= $self->run_todo_group( $invocant, $test );
         }
         else {
-            $do_test->();
+            $pass &&= $self->run_test_group( $invocant, $test );
         }
-
-        $ret = !$ret if $test->{ _invert_result };
-        ok( $ret, "Test Group '$name' returned properly" );
-        diag $err unless $ret;
-        $pass &&= $ret;
     }
 
-    $runner->_tests([]);
+    $self->tests([]);
     return $pass;
+}
+
+sub run_skip_group {
+    my $self = shift;
+    my ( $invocant, $test ) = @_;
+    my $name = $test->{ name };
+    $self->TB->note( "Skipping: $name" );
+    $self->TB->skip( $test->{skip} );
+    1;
+}
+
+sub run_todo_group {
+    my $self = shift;
+    my ( $invocant, $test ) = @_;
+    $self->TB->todo_start( $test->{todo} );
+    my $out = $self->run_test_eval( $invocant, $test );
+    $self->TB->todo_end();
+    return $out;
+}
+
+sub run_test_group {
+    my $self = shift;
+    my ( $invocant, $test ) = @_;
+    $self->run_test_eval( $invocant, $test );
+}
+
+sub run_test_eval {
+    my $self = shift;
+    my ( $invocant, $test ) = @_;
+
+    # Seed again before running test, for reproducibility
+    srand( $self->seed );
+    my $ret = eval { $test->{method}->( $invocant ); 1 };
+    return $ret ? $ret : $self->test_eval_error( $ret, $@, $test );
+}
+
+sub test_eval_error {
+    my $self = shift;
+    my ( $ret, $error, $test ) = @_;
+
+    return !$ret if $test->{ should_fail };
+
+    my $name = $test->{name};
+    $self->TB->ok( $ret, "Test Group '$name' died (it should not)" );
+    $self->TB->diag( $error );
+
+    return $ret;
 }
 
 sub fennec_accessors {
@@ -195,7 +291,6 @@ sub fennec_accessors {
 
 1;
 
-
 =head1 NAME
 
 Fennec::Lite - Minimalist Fennec, the commonly used bits.
@@ -209,7 +304,7 @@ Moose.
 
 Fennec::Lite is a single module file with no non-core dependencies. It can
 easily be used by any project, either directly, or by copying it into your
-project. The file itself is less than 200 lines of code at the time of this
+project. The file itself is less than 300 lines of code at the time of this
 writing, that includes whitespace.
 
 This module does not cover any of the more advanced features such as result
@@ -287,6 +382,25 @@ hood for TAP output.
     );
 
     run_tests( "This is the construction string" );
+
+=head2 Pure OO Interface
+
+    #!/usr/bin/perl
+    use strict;
+    use warnings;
+
+    use Fennec::Lite ();
+    use Test::More;
+
+    my $fennec = Fennec::Lite->new( test_class => __PACKAGE__ );
+
+    $fennec->add_tests( "test name" => sub {
+        ok( ... );
+    });
+
+    $fennec->run_tests;
+
+    done_testing();
 
 =head1 IMPORTED FOR YOU
 
@@ -375,10 +489,124 @@ If no constructor is present a default is used. All tests that have been added
 will be run. All tests will be cleared, you may continue to declare tests and
 call run_tests again to run the new tests.
 
+=item fennec()
+
+Returns the instance of Fennec::Lite created when you imported it. This is the
+instance that tests() and run_tests() act upon.
+
 =item fennec_accessors( @NAMES )
 
 Quickly generate get/set accessors for your test class. You could alternatively
 do it manually or use L<Moose>.
+
+=back
+
+=head1 PURE OO INTERFACE METHODS
+
+=over 4
+
+=item $tests_ref = $fennec->tests()
+
+Get a reference to the array of tests that have been added since the last run.
+
+=item $classname = $fennec->test_class( $classname )
+
+Get/Set the class name that will be used to create test objects that will act
+as the invocant on all test methods.
+
+=item $seed = $fennec->seed( $newseed )
+
+Get/Set the random seed that will be used to re-seed srand() before randomizing
+tests, as well as before each test.
+
+=item $bool = $fennec->random( $bool )
+
+Turn random on/off.
+
+=item $fennec->add_tests( $name => sub { ... })
+
+=item $fennec->add_tests( $name, %args, method => sub { ... })
+
+Add a test group.
+
+=item $fennec->run_tests( %test_class_construction_args )
+
+Run the test groups
+
+=item $bool = $fennec->run_skip_test( \%test )
+
+Run a skip test (really just returns true)
+
+=item $bool = $fennec->run_todo_group( \%test )
+
+Run a group as TODO
+
+=item $bool = $fennec->run_test_group( \%test )
+
+Run a test group.
+
+=item ( $bool, $error ) = $fennec->run_test_eval( \%test )
+
+Does the actual test running in an eval to capture errors.
+
+=item $fennec->test_eval_error( $bool, $error, \%test )
+
+Handle a test eval error.
+
+=back
+
+=head1 Extending Fennec::Lite
+
+In the tradition of the Fennec project, Fennec::Lite is designed to be
+extensible. You can even easily subclass/edit Fennec::Lite to work with
+alternatives to Test::Builder.
+
+=head2 METHODS TO OVERRIDE
+
+=over 4
+
+=item $fennec->init()
+
+Called by new prior to returning the newly constructed object. In Fennec::Lite
+this loads L<Test::Builder> and puts a reference to it in the TB() accessor. If
+you do want to replace L<Test::Builder> in your subclass you may do so by
+overriding init().
+
+=item $fennec->run_skip_test( \%test )
+
+Calls Test::Builder->skip( $reason ), then returns true. Override this if you
+replace Test::Builder in your subclass.
+
+=item $fennec->run_todo_group( \%test )
+
+Calls run_test_eval() in a TODO environment. Currently uses L<Test::Builder> to
+start/stop TODO mode around the test. Override this if you wish to replace
+Test::Builder.
+
+=item $fennec->test_eval_error( $bool, $error, \%test )
+
+Handle an exception thrown in a test group method. Currently calls
+Test::Bulder->ok( 0, GROUP_NAME ).
+
+=item @list = must_load()
+
+Returns a list of modules that MUST be loaded into tho calling class (unless
+used in OO form). This is currently only L<Test::More>.
+
+=item @list = may_load()
+
+Returns a list of modules that should be loaded only if they are installed.
+
+=item $name_to_code_ref = module_loaders()
+
+Returns a hashref containing package => sub { ... }. Use this if you need to
+load modules in a custom way, currently Test::More has a special loader in here
+to account for plans.
+
+=item $fennec->import_hook()
+
+Called on the instance that was created by import(), runs at the very end of
+the import process. Currently does nothing.
 
 =back
 
