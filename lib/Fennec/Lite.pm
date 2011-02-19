@@ -6,7 +6,7 @@ use Carp qw/ croak /;
 use List::Util qw/ shuffle /;
 use B;
 
-our $VERSION = '0.004';
+our $VERSION = '1.000';
 
 our %MODULE_LOADERS = (
     'Test::More' => sub {
@@ -188,7 +188,7 @@ sub run_tests {
     my %params = @_;
     my $tests = $self->tests;
     my $pass = 1;
-    my $item = $ENV{FENNEC_ITEM};
+    my $item = $ENV{FENNEC_TEST} || $ENV{FENNEC_ITEM};
 
     my $invocant_class = $self->test_class;
     my $invocant = $invocant_class->can( 'new' )
@@ -309,7 +309,7 @@ writing, that includes whitespace.
 
 This module does not cover any of the more advanced features such as result
 capturing or SPEC workflows. This module only covers test grouping and group
-randomization. You can also use the FENNEC_ITEM variable with a group name or
+randomization. You can also use the FENNEC_TEST variable with a group name or
 line number to run a specific test group only. Test::Builder is used under the
 hood for TAP output.
 
@@ -454,11 +454,11 @@ environment variable will be used as the seed when it is present.
 
 =head1 RUNNING SPECIFIC GROUPS
 
-You can use the FENNEC_ITEM variable with a group name or line number to run a
+You can use the FENNEC_TEST variable with a group name or line number to run a
 specific test group only.
 
-    $ FENNEC_ITEM="22" prove -I lib -v t/MyTest.t
-    $ FENNEC_ITEM="Test Group A" prove -I lib -v t/MyTest.t
+    $ FENNEC_TEST="22" prove -I lib -v t/MyTest.t
+    $ FENNEC_TEST="Test Group A" prove -I lib -v t/MyTest.t
 
 This can easily be integrated into an editor such as vim or emacs.
 
