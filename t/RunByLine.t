@@ -7,20 +7,14 @@ use Fennec::Lite plan => 2;
 
 my $ran;
 
-tests "item_blah" => sub {
-    $ran++
-};
+tests "item_blah" => sub { $ran++ };
 
-tests "item_by_line" => sub {
-    $ran = "correct";
-};
+tests "item_by_line" => sub { $ran = "correct"; };
 
-tests "item_extra" => sub {
-    $ran++
-};
+tests "item_extra" => sub { $ran++ };
 
 {
-    local $ENV{FENNEC_ITEM} = 15;
+    local $ENV{FENNEC_ITEM} = 11;
     run_tests();
     is( $ran, "correct", "Only ran 1" );
 }
@@ -28,20 +22,14 @@ tests "item_extra" => sub {
 $ran = undef;
 my $fennec = Fennec::Lite->new( test_class => __PACKAGE__ );
 
-$fennec->add_tests( "item_blah" => sub {
-    $ran++
-});
+$fennec->add_tests( "item_blah" => sub { $ran++ });
 
-$fennec->add_tests( "item_by_line" => sub {
-    $ran = "correct";
-});
+$fennec->add_tests( "item_by_line" => sub { $ran = "correct"; });
 
-$fennec->add_tests( "item_extra" => sub {
-    $ran++
-});
+$fennec->add_tests( "item_extra" => sub { $ran++ });
 
 {
-    local $ENV{FENNEC_ITEM} = 36;
+    local $ENV{FENNEC_ITEM} = 26;
     $fennec->run_tests();
     is( $ran, "correct", "Only ran 1" );
 }
